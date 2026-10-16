@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Chamber Designer</title>
+<style>
+:root{--bg:#eef1f6;--card:#fff;--fg:#1c2330;--mut:#5b6678;--line:#cbd3e0;--acc:#2a7de1;--warn:#b45309;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0c1017;--card:#151b26;--fg:#e8edf5;--mut:#8b97aa;--line:#2a3345;--acc:#5aa2ff;--warn:#fbbf24}}
+:root[data-theme="dark"]{--bg:#0c1017;--card:#151b26;--fg:#e8edf5;--mut:#8b97aa;--line:#2a3345;--acc:#5aa2ff;--warn:#fbbf24}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:14px}
+.wrap{max-width:980px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+h1{font-size:20px;margin:0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+button,input,textarea{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:7px;padding:6px 10px}
+button{cursor:pointer}
+button.on{outline:2px solid var(--acc);border-color:var(--acc)}
+.sw{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;border:1px solid rgba(0,0,0,.3)}
+canvas{display:block;width:100%;aspect-ratio:960/544;border-radius:8px;cursor:crosshair;touch-action:none;background:#1a1f29}
+label{display:flex;flex-direction:column;gap:3px;color:var(--mut);font-size:12px}
+.grow{flex:1;min-width:180px}
+textarea{width:100%;box-sizing:border-box;font:12px/1.4 ui-monospace,Consolas,monospace;min-height:220px;resize:vertical}
+#warn{color:var(--warn);min-height:18px}
+.chip{width:28px;padding:5px 0;text-align:center;font-weight:700}
+details{color:var(--mut);font-size:13px}pre{margin:6px 0 0;font:12px/1.4 ui-monospace,Consolas,monospace;white-space:pre-wrap;color:var(--fg)}
+</style></head><body><div class="wrap">
+<h1>Chamber Designer</h1>
+<div class="card">
+ <div class="row" id="tools"></div>
+ <div class="row" style="margin-top:8px"><span style="color:var(--mut)">Colour ID (buttons &amp; doors):</span><span class="row" id="ids"></span>
+ <span style="color:var(--mut);margin-left:auto" id="hint"></span></div>
+</div>
+<canvas id="c" width="960" height="544"></canvas>
+<div class="card row">
+ <label>Chamber number<input id="num" type="number" min="1" value="18" style="width:110px"></label>
+ <label class="grow">Name<input id="name" value="My Chamber"></label>
+ <label class="grow" style="flex:3">Hint (shown on screen)<input id="hintText" value="Describe the puzzle here."></label>
+</div>
+<div class="row">
+ <button id="undo">↶ Undo (Ctrl+Z)</button><button id="clear">Clear</button>
+ <button id="copy">Copy code</button><button id="dl">Download chamberNN.js</button>
+ <button id="open">Open .js file…</button><input id="file" type="file" accept=".js,.txt" hidden>
+ <span id="warn" style="margin-left:auto"></span>
+</div>
+<div class="card">
+ <label>Chamber code – copy it, or paste an existing chamber here and press Load
+  <textarea id="out" spellcheck="false"></textarea></label>
+ <div class="row" style="margin-top:6px"><button id="load">Load code into editor</button>
+ <span style="color:var(--mut)" id="note"></span></div>
+</div>
+<details class="card"><summary>Syntax reference</summary><pre>registerChamber({
+ name:'Title',  hint:'Text shown at the top of the screen',
+ ops:[ ['#',x0,y0,x1,y1], ['W',x,y], ['S',2,15], ['E',26,15] ],   // 30 x 17 tiles, (0,0) = top-left
+ cubes:[ [x,y] ],                 // cube spawn tile
+ buttons:[ [x,y,id] ],            // floor button, id 0-3 (red, yellow, green, purple)
+ doors:[ [x0,y0,x1,y1,id] ]       // opens while ALL buttons with the same id are pressed
+});
+ops characters:  #  solid wall      W  white portal wall     ~  acid
+                 L  laser field (kills the player, cubes pass through)
+                 S  start           E  exit                  .  empty (carve)
+The outer border is solid by default. Paint over it with W to make portal walls on the edge.
+Add the file as chambers/chamberNN.js and set CHAMBERS=NN in index.html.</pre></details>
+</div>
+<script>
+const W=30,H=17,T=32,cv=document.getElementById('c'),g=cv.getContext('2d'),$=id=>document.getElementById(id);
+const COL=['#ff4d6d','#ffd23f','#5ee6a8','#b48cff'];
+const TOOLS=[['#','Solid','#394050'],['W','White wall','#e6ebf3'],['~','Acid','#37c92a'],['L','Laser field','#ff4d6d'],['S','Start','#4ade80'],['E','Exit','#7dffb0'],['cube','Cube','#8b95a8'],['btn','Button','#ffd23f'],['door','Door (drag)','#b48cff'],['erase','Erase','#888']];
+let tool='#',cid=0,grid,cubes,btns,doors,undo=[],drag=null,hov=null,last=null;
+const def=(x,y)=>x==0||y==0||x==W-1||y==H-1?'#':'.';
+function reset(){grid=Array.from({length:H},(_,y)=>Array.from({length:W},(_,x)=>def(x,y)));cubes=[];btns=[];doors=[]}
+const snap=()=>JSON.stringify({grid,cubes,btns,doors});
+const restore=s=>{({grid,cubes,btns,doors}=JSON.parse(s))};
+reset();
+// toolbar
+TOOLS.forEach(([k,n,c])=>{const b=document.createElement('button');b.innerHTML='<span class="sw" style="background:'+c+'"></span>'+n;b.onclick=()=>{tool=k;sync()};b.dataset.k=k;$('tools').appendChild(b)});
+COL.forEach((c,i)=>{const b=document.createElement('button');b.className='chip';b.textContent=i;b.style.borderBottom='4px solid '+c;b.onclick=()=>{cid=i;sync()};b.dataset.i=i;$('ids').appendChild(b)});
+const HINTS={'door':'Drag a rectangle to place a door','cube':'Click to add / remove a cube','btn':'Click to add / remove a button','S':'Click to move the start','E':'Click to move the exit','erase':'Click or drag to erase'};
+function sync(){document.querySelectorAll('#tools button').forEach(b=>b.classList.toggle('on',b.dataset.k==tool));document.querySelectorAll('#ids button').forEach(b=>b.classList.toggle('on',b.dataset.i==cid));$('hint').textContent=HINTS[tool]||'Click or drag to paint';refresh()}
+// editing
+function paint(x,y,first){
+ if(tool=='cube'||tool=='btn'){if(!first)return;const a=tool=='cube'?cubes:btns,i=a.findIndex(c=>c[0]==x&&c[1]==y);i<0?a.push(tool=='cube'?[x,y]:[x,y,cid]):a.splice(i,1)}
+ else if(tool=='erase'){grid[y][x]=def(x,y);cubes=cubes.filter(c=>!(c[0]==x&&c[1]==y));btns=btns.filter(c=>!(c[0]==x&&c[1]==y));doors=doors.filter(d=>!(x>=d[0]&&x<=d[2]&&y>=d[1]&&y<=d[3]))}
+ else if(tool=='S'||tool=='E'){if(!first)return;grid.forEach((r,yy)=>r.forEach((c,xx)=>{if(c==tool)r[xx]=def(xx,yy)}));grid[y][x]=tool}
+ else if(tool!='door')grid[y][x]=tool;
+}
+const tile=e=>{const r=cv.getBoundingClientRect();return[Math.max(0,Math.min(W-1,Math.floor((e.clientX-r.left)/r.width*W))),Math.max(0,Math.min(H-1,Math.floor((e.clientY-r.top)/r.height*H)))]};
+cv.onpointerdown=e=>{e.preventDefault();cv.setPointerCapture(e.pointerId);const[x,y]=tile(e);undo.push(snap());if(undo.length>60)undo.shift();
+ last=x+','+y;if(tool=='door')drag={x0:x,y0:y,x1:x,y1:y};else{drag={};paint(x,y,true)}refresh()};
+cv.onpointermove=e=>{const[x,y]=tile(e);hov=[x,y];if(drag){if(tool=='door'){drag.x1=x;drag.y1=y}else if(last!=x+','+y){last=x+','+y;paint(x,y,false)}}refresh()};
+cv.onpointerup=()=>{if(drag&&tool=='door'){const d=drag;doors.push([Math.min(d.x0,d.x1),Math.min(d.y0,d.y1),Math.max(d.x0,d.x1),Math.max(d.y0,d.y1),cid])}drag=null;refresh()};
+cv.onpointerleave=()=>{hov=null;draw()};
+cv.oncontextmenu=e=>e.preventDefault();
+$('undo').onclick=doUndo;function doUndo(){if(undo.length){restore(undo.pop());refresh()}}
+addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()=='z'&&document.activeElement.tagName!='TEXTAREA'&&document.activeElement.tagName!='INPUT'){e.preventDefault();doUndo()}});
+$('clear').onclick=()=>{if(confirm('Clear the whole chamber?')){undo.push(snap());reset();refresh()}};
+// drawing
+function draw(){
+ g.fillStyle='#1a1f29';g.fillRect(0,0,960,544);
+ for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+  const c=grid[y][x],X=x*T,Y=y*T;
+  if(c=='#'){g.fillStyle='#394050';g.fillRect(X,Y,T,T);g.strokeStyle='#272c38';g.strokeRect(X+.5,Y+.5,T-1,T-1)}
+  else if(c=='W'){g.fillStyle='#e6ebf3';g.fillRect(X,Y,T,T);g.strokeStyle='#b3bccb';g.strokeRect(X+.5,Y+.5,T-1,T-1)}
+  else{g.strokeStyle='#202633';g.strokeRect(X+.5,Y+.5,T-1,T-1)}
+  if(c=='~'){g.fillStyle='#37c92a';g.fillRect(X,Y+6,T,T-6);g.fillStyle='#8dff5a';g.fillRect(X,Y+6,T,3)}
+  if(c=='L'){g.fillStyle='rgba(255,40,60,.3)';g.fillRect(X,Y,T,T);g.fillStyle='#ff4d6d';g.fillRect(X,Y+14,T,4)}
+  if(c=='S'){g.fillStyle='#4ade80';g.beginPath();g.arc(X+16,Y+16,11,0,7);g.fill();g.fillStyle='#06210f';g.font='700 14px system-ui';g.textAlign='center';g.fillText('S',X+16,Y+21)}
+  if(c=='E'){g.fillStyle='#0a0e14';g.fillRect(X+3,Y+2,26,30);g.strokeStyle='#7dffb0';g.lineWidth=2;g.strokeRect(X+4,Y+3,24,29);g.fillStyle='#7dffb0';g.fillRect(X+14,Y+8,4,4);g.lineWidth=1}
+ }
+ const dr=(d,a)=>{const col=COL[d[4]],X=d[0]*T,Y=d[1]*T,w=(d[2]-d[0]+1)*T,h=(d[3]-d[1]+1)*T;g.globalAlpha=a;g.fillStyle='#2b2230';g.fillRect(X,Y,w,h);g.strokeStyle=col;g.lineWidth=3;g.strokeRect(X+2,Y+2,w-4,h-4);g.globalAlpha=1;g.fillStyle=col;g.font='700 14px system-ui';g.textAlign='center';g.fillText('door '+d[4],X+w/2,Y+16)};
+ doors.forEach(d=>dr(d,.9));
+ if(drag&&tool=='door')dr([Math.min(drag.x0,drag.x1),Math.min(drag.y0,drag.y1),Math.max(drag.x0,drag.x1),Math.max(drag.y0,drag.y1),cid],.5);
+ btns.forEach(([x,y,i])=>{g.fillStyle='#2a303d';g.fillRect(x*T+2,y*T+28,28,4);g.fillStyle=COL[i];g.fillRect(x*T+6,y*T+22,20,6)});
+ cubes.forEach(([x,y])=>{const cx=x*T+16,cy=y*T+21;g.fillStyle='#8b95a8';g.fillRect(cx-11,cy-11,22,22);g.strokeStyle='#e8edf5';g.lineWidth=2;g.strokeRect(cx-10,cy-10,20,20);g.fillStyle='#4fd1ff';g.fillRect(cx-4,cy-4,8,8)});
+ if(hov){g.strokeStyle='#fff';g.lineWidth=2;g.strokeRect(hov[0]*T+1,hov[1]*T+1,T-2,T-2)}
+}
+// code generation
+const q=s=>"'"+String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\s+/g,' ').trim()+"'";
+function genOps(){
+ const seen=Array.from({length:H},()=>Array(W).fill(0)),out=[];let S=null,E=null;
+ for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+  const c=grid[y][x];if(c=='S'){S=[x,y]}if(c=='E'){E=[x,y]}
+  if(seen[y][x]||c==def(x,y)||c=='S'||c=='E')continue;
+  let x1=x;while(x1+1<W&&!seen[y][x1+1]&&grid[y][x1+1]==c)x1++;
+  let y1=y;while(y1+1<H&&Array.from({length:x1-x+1},(_,i)=>i).every(i=>!seen[y1+1][x+i]&&grid[y1+1][x+i]==c))y1++;
+  for(let yy=y;yy<=y1;yy++)for(let xx=x;xx<=x1;xx++)seen[yy][xx]=1;
+  out.push(x==x1&&y==y1?[c,x,y]:[c,x,y,x1,y1]);
+ }
+ if(S)out.push(['S',...S]);if(E)out.push(['E',...E]);
+ return{out,S,E};
+}
+const fmt=o=>'['+q(o[0])+','+o.slice(1).join(',')+']';
+function gen(){
+ const{out,S,E}=genOps(),L=[];
+ L.push('registerChamber({',' name:'+q($('name').value)+',',' hint:'+q($('hintText').value)+',',' ops:[');
+ out.forEach((o,i)=>L.push('  '+fmt(o)+(i<out.length-1?',':'')));
+ L.push(' ]');
+ const extra=(k,a)=>{if(a.length)L[L.length-1]+=',',L.push(' '+k+':['+a.map(x=>'['+x.join(',')+']').join(',')+']')};
+ extra('cubes',cubes);extra('buttons',btns);extra('doors',doors);
+ L.push('});');
+ const w=[];if(!S)w.push('no Start (S)');if(!E)w.push('no Exit (E)');
+ const ids=new Set(doors.map(d=>d[4]));ids.forEach(i=>{if(!btns.some(b=>b[2]==i))w.push('door '+i+' has no button')});
+ $('warn').textContent=w.length?'⚠ '+w.join(', '):'';
+ $('note').textContent='Save as chambers/chamber'+String(+$('num').value||1).padStart(2,'0')+'.js and set CHAMBERS='+(+$('num').value||1)+' (or higher) in index.html.';
+ return L.join('\n')+'\n';
+}
+function refresh(){draw();$('out').value=gen()}
+['num','name','hintText'].forEach(i=>$(i).oninput=()=>$('out').value=gen());
+// import
+function importCode(txt){
+ let got=null;
+ try{new Function('registerChamber','mirror',txt)(c=>got=c,ops=>ops.map(([c,a,b,d,e])=>d===undefined?[c,29-a,b]:[c,29-d,b,29-a,e]))}catch(e){alert('Could not read that code: '+e.message);return}
+ if(!got||!Array.isArray(got.ops)){alert('No registerChamber({...}) found.');return}
+ undo.push(snap());reset();
+ for(const[c,a,b,d,e]of got.ops)for(let y=b;y<=(e??b);y++)for(let x=a;x<=(d??a);x++)if(y>=0&&y<H&&x>=0&&x<W)grid[y][x]=c;
+ cubes=(got.cubes||[]).map(a=>a.slice());btns=(got.buttons||[]).map(a=>a.slice());doors=(got.doors||[]).map(a=>a.slice());
+ $('name').value=got.name||'';$('hintText').value=got.hint||'';refresh();
+}
+$('load').onclick=()=>importCode($('out').value);
+$('open').onclick=()=>$('file').click();
+$('file').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{importCode(r.result);const m=f.name.match(/(\d+)/);if(m)$('num').value=+m[1];$('out').value=gen()};r.readAsText(f);e.target.value=''};
+$('copy').onclick=async()=>{const t=$('out').value;try{await navigator.clipboard.writeText(t)}catch(e){$('out').select();document.execCommand('copy')}$('copy').textContent='Copied ✓';setTimeout(()=>$('copy').textContent='Copy code',1200)};
+$('dl').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([$('out').value],{type:'text/javascript'}));a.download='chamber'+String(+$('num').value||1).padStart(2,'0')+'.js';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
+sync();
+</script></body></html>

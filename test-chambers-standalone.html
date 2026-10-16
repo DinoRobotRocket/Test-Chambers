@@ -19,7 +19,7 @@ const T=32,GW=30,GH=17,cv=document.getElementById('c'),g=cv.getContext('2d');
 cv.width=960;cv.height=544;
 // Chambers live in chambers/chamberNN.js and are loaded one at a time, on demand.
 // ops: [char,x0,y0,x1?,y1?]  S=start E=exit W=portal wall #=solid ~=acid
-const CHAMBERS=17,CH=[];let wantIdx=-1,errMsg='';
+const CHAMBERS=18,CH=[];let wantIdx=-1,errMsg='';
 const chFile=i=>'chambers/chamber'+String(i+1).padStart(2,'0')+'.js';
 window.registerChamber=c=>{CH[wantIdx]=c};
 window.mirror=ops=>ops.map(([c,a,b,d,e])=>d===undefined?[c,29-a,b]:[c,29-d,b,29-a,e]);
@@ -124,8 +124,24 @@ wantIdx=16;registerChamber({
  buttons:[[7,15,0],[18,15,1]],
  doors:[[9,1,9,15,0],[20,1,20,15,1]]
 });
+wantIdx=17;registerChamber({
+ name:'Laser Shaft',
+ hint:'Red laser fields kill you but cubes pass straight through. Carry the cube up the steps and drop it down the shaft onto the button.',
+ ops:[
+  ['#',12,13,13,15],
+  ['#',14,12,15,15],
+  ['#',16,11,19,15],
+  ['#',21,11,24,15],
+  ['L',20,12,20,14],
+  ['S',2,15],
+  ['E',28,15]
+ ],
+ cubes:[[4,15]],
+ buttons:[[20,15,0]],
+ doors:[[26,1,26,15,0]]
+});
 const C=['#2aa8ff','#ff8a1f'];
-let btn=[],doors=[],doorAt={},cubes=[],held=null,map,lvl=0,P,po=[null,null],mouse={x:700,y:200},keys={},fx=[],st='play',tm=0,deaths=0,last=0,now=0,bg,gunC=C[0],acid=[],ex;
+let lasers=[],btn=[],doors=[],doorAt={},cubes=[],held=null,map,lvl=0,P,po=[null,null],mouse={x:700,y:200},keys={},fx=[],st='play',tm=0,deaths=0,last=0,now=0,bg,gunC=C[0],acid=[],ex;
 const sol=(x,y)=>x<0||y<0||x>=GW||y>=GH||'#W'.includes(map[y][x])||(d=>!!d&&!d.open)(doorAt[y*GW+x]);
 function pass(x,y,e){if(!po[0]||!po[1])return false;for(const p of po)if(p.t.some(t=>t[0]==x&&t[1]==y))return e.vx*p.nx+e.vy*p.ny<-1;return false}
 const blocked=(x,y,e)=>sol(x,y)&&!pass(x,y,e);
@@ -140,7 +156,7 @@ function load(i){
  document.head.appendChild(sc);
 }
 function build(i){
- lvl=i;st='play';po=[null,null];fx=[];acid=[];
+ lvl=i;st='play';po=[null,null];fx=[];acid=[];lasers=[];
  const ch=CH[i];
  btn=(ch.buttons||[]).map(([x,y,id])=>({x,y,id,on:0}));
  doors=(ch.doors||[]).map(([x0,y0,x1,y1,id])=>({x0,y0,x1,y1,id,open:0}));
@@ -156,7 +172,7 @@ function build(i){
   else if(c=='#'){b.fillStyle='#394050';b.fillRect(X,Y,T,T);b.strokeStyle='#272c38';b.strokeRect(X+.5,Y+.5,T-1,T-1)}
   else if(c=='W'){b.fillStyle='#e6ebf3';b.fillRect(X,Y,T,T);b.strokeStyle='#b3bccb';b.strokeRect(X+.5,Y+.5,T-1,T-1)}
   else{b.strokeStyle='#202633';b.strokeRect(X+.5,Y+.5,T-1,T-1)}
-  if(c=='~')acid.push([x,y]);
+  if(c=='~')acid.push([x,y]);if(c=='L')lasers.push([x,y]);
   if(c=='E'){ex=[x,y];b.fillStyle='#0a0e14';b.fillRect(X+3,Y+2,26,30);b.strokeStyle='#7dffb0';b.lineWidth=2;b.strokeRect(X+4,Y+3,24,29);b.fillStyle='#7dffb0';b.fillRect(X+14,Y+8,4,4);b.lineWidth=1}
  }
 }
@@ -234,13 +250,14 @@ function upd(dt){
  for(const b of btn){b.on=0;for(const e of[P,...cubes])if(Math.abs(e.x-(b.x*T+16))<e.hw+12&&e.y+e.hh>b.y*T+22&&e.y-e.hh<b.y*T+32)b.on=1}
  for(const d of doors){const bs=btn.filter(b=>b.id==d.id);d.open=bs.length&&bs.every(b=>b.on)?1:0}
  const tx=Math.floor(P.x/T),ty=Math.floor(P.y/T),fy=Math.floor((P.y+12)/T);
- if(map[fy]?.[tx]=='~'||P.y>GH*T+40)return die();
+ if(lasers.some(([x,y])=>Math.abs(P.x-(x*T+16))<22&&Math.abs(P.y-(y*T+16))<28)||map[fy]?.[tx]=='~'||P.y>GH*T+40)return die();
  if(ex&&tx==ex[0]&&ty==ex[1]){st='won';tm=1.3}
 }
 function wrap(s,w){const o=[];let l='';for(const wd of s.split(' ')){if(g.measureText(l+wd).width>w){o.push(l);l=''}l+=wd+' '}o.push(l);return o}
 function draw(){
  g.drawImage(bg,0,0);
  for(const[x,y]of acid){const w=Math.sin(now*3+x)*2;g.fillStyle='#37c92a';g.fillRect(x*T,y*T+6+w,T,T);g.fillStyle='#8dff5a';g.fillRect(x*T,y*T+6+w,T,3)}
+ for(const[x,y]of lasers){g.fillStyle='rgba(255,40,60,'+(.22+.12*Math.sin(now*12+y))+')';g.fillRect(x*T,y*T,T,T);g.save();g.fillStyle='#ff4d6d';g.shadowColor='#ff4d6d';g.shadowBlur=10;g.fillRect(x*T,y*T+14,T,4);g.restore()}
  const DC=['#ff4d6d','#ffd23f','#5ee6a8','#b48cff'];
  for(const d of doors){const col=DC[d.id%4],w=(d.x1-d.x0+1)*T,h=(d.y1-d.y0+1)*T;
   g.fillStyle=d.open?'rgba(255,255,255,.05)':'#2b2230';g.fillRect(d.x0*T,d.y0*T,w,h);

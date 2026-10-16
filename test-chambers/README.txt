@@ -7,3 +7,5 @@ ops are [char,x0,y0,x1,y1] on a 30x17 grid: # solid, W portal-able white wall, ~
 mirror([...]) flips a layout left-to-right.
 
 Button puzzles: chamber files may also have cubes:[[x,y]], buttons:[[x,y,id]], doors:[[x0,y0,x1,y1,id]]. A door opens while every button with its id is pressed. Update CHAMBERS in index.html when you add files.
+
+Laser field: ops character 'L' (one tile). It kills the player but cubes pass through. Use chamber-designer.html (separate tool) to build chambers visually and export the code.
